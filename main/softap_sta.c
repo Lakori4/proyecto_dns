@@ -65,6 +65,9 @@
 #define EXAMPLE_ESP_WIFI_AP_PASSWD          "123456789"
 #define EXAMPLE_ESP_WIFI_CHANNEL            CONFIG_ESP_WIFI_AP_CHANNEL
 #define EXAMPLE_MAX_STA_CONN                CONFIG_ESP_MAX_STA_CONN_AP
+#define DNS_PORT 53
+#define DNS_RESPONSE_IP "192.168.4.1" 
+#define DNS_RESPONSE_TTL 300
 
 
 /* The event group allows multiple bits for each event, but we only care about two events:
@@ -84,8 +87,7 @@ static int s_retry_num = 0;
 /* FreeRTOS event group to signal when we are connected/disconnected */
 static EventGroupHandle_t s_wifi_event_group;
 
-static void wifi_event_handler(void *arg, esp_event_base_t event_base,
-                               int32_t event_id, void *event_data)
+static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STACONNECTED) {
         wifi_event_ap_staconnected_t *event = (wifi_event_ap_staconnected_t *) event_data;
@@ -176,6 +178,77 @@ void softap_set_dns_addr(esp_netif_t *esp_netif_ap,esp_netif_t *esp_netif_sta)
     ESP_ERROR_CHECK_WITHOUT_ABORT(esp_netif_dhcps_start(esp_netif_ap));
 }
 
+#define DNS_PORT 53
+#define DNS_RESPONSE_TTL 300
+
+static void decode_dns_name(const char *packet, int offset, char *output, size_t max_len) {
+    int i = 0;
+    int j = 0;
+    while (packet[offset] != 0 && i < max_len - 1) {
+        int len = packet[offset++];
+        for (int k = 0; k < len && i < max_len - 1; k++) {
+            output[i++] = packet[offset++];
+        }
+        if (packet[offset] != 0) {
+            output[i++] = '.';
+        }
+    }
+    output[i] = '\0';
+}
+
+
+
+static void dns_server_task(void *pvParameters) {
+    char rx_buffer[256];
+    struct sockaddr_in source_addr;
+    socklen_t socklen = sizeof(source_addr);
+    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+    if (sock < 0) {
+        ESP_LOGE("dns_server", "Unable to create socket");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    struct sockaddr_in bind_addr = {
+        .sin_family = AF_INET,
+        .sin_port = htons(DNS_PORT),
+        .sin_addr.s_addr = htonl(INADDR_ANY),
+    };
+
+    bind(sock, (struct sockaddr *)&bind_addr, sizeof(bind_addr));
+    ESP_LOGI("dns_server", "DNS server started on port %d", DNS_PORT);
+
+    while (1) {
+        int len = recvfrom(sock, rx_buffer, sizeof(rx_buffer), 0,
+                           (struct sockaddr *)&source_addr, &socklen);
+        if (len <= 0) continue;
+
+        // Copia la respuesta base
+        char tx_buffer[256];
+        memcpy(tx_buffer, rx_buffer, len);
+
+        // Poner como respuesta
+        tx_buffer[2] |= 0x80; // QR = 1 (respuesta)
+        tx_buffer[3] |= 0x80; // RA = 1 (Recursion Available)
+        tx_buffer[7] = 0x01;  // ANCOUNT = 1
+
+        int ptr = len;
+
+        // Extract the query name
+        char query_name[256];
+        decode_dns_name(rx_buffer, 12, query_name, sizeof(query_name));
+        printf("Nombre recibido: %s\n", query_name);
+
+        // Si la consulta es para "pruebaDNS.local"
+        if (strcmp(query_name, "pruebaDNS.local") == 0) {
+            ESP_LOGI("dns_server", "Resolviendo pruebaDNS -> %s", DNS_RESPONSE_IP);
+        } 
+        sendto(sock, tx_buffer, ptr, 0, (struct sockaddr *)&source_addr, socklen);
+    }
+}
+
+
+
 void app_main(void)
 {
     ESP_ERROR_CHECK(esp_netif_init());
@@ -220,6 +293,8 @@ void app_main(void)
 
     /* Start WiFi */
     ESP_ERROR_CHECK(esp_wifi_start() );
+    
+    xTaskCreate(&dns_server_task, "dns_server", 4096, NULL, 5, NULL);
 
     /*
      * Wait until either the connection is established (WIFI_CONNECTED_BIT) or
