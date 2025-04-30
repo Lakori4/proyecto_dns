@@ -1,1 +1,14 @@
-/.vscode
+# Ignorar todo
+*
+
+# Exceptuar .gitignore para que no se ignore a sí mismo
+!/.gitignore
+
+# Permitir todo dentro de main/
+!/main/
+!/main/**
+
+# Permitir solo la carpeta build/config/
+build/*
+!/build/config/
+!/build/config/**

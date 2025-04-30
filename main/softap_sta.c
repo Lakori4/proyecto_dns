@@ -63,8 +63,8 @@
 /* AP Configuration */
 #define EXAMPLE_ESP_WIFI_AP_SSID            "ESP32-S3"
 #define EXAMPLE_ESP_WIFI_AP_PASSWD          "123456789"
-#define EXAMPLE_ESP_WIFI_CHANNEL            CONFIG_ESP_WIFI_AP_CHANNEL
-#define EXAMPLE_MAX_STA_CONN                CONFIG_ESP_MAX_STA_CONN_AP
+#define EXAMPLE_ESP_WIFI_CHANNEL            1
+#define EXAMPLE_MAX_STA_CONN                4
 #define DNS_PORT 53
 #define DNS_RESPONSE_IP "192.168.4.1" 
 #define DNS_RESPONSE_TTL 300
