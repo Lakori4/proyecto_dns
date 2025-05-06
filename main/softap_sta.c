@@ -240,7 +240,7 @@ static void dns_server_task(void *pvParameters) {
         printf("Nombre recibido: %s\n", query_name);
 
         // Si la consulta es para "pruebaDNS.local"
-        if (strcmp(query_name, "pruebaDNS.local") == 0) {
+        if (strcmp(query_name, "pruebaDNS.net") == 0) {
             ESP_LOGI("dns_server", "Resolviendo pruebaDNS -> %s", DNS_RESPONSE_IP);
         } 
         sendto(sock, tx_buffer, ptr, 0, (struct sockaddr *)&source_addr, socklen);

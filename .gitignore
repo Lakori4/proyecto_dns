@@ -3,6 +3,7 @@
 
 # Exceptuar .gitignore para que no se ignore a sí mismo
 !/.gitignore
+!/CMakeLists.txt
 
 # Permitir todo dentro de main/
 !/main/
