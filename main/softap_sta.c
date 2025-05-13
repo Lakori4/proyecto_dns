@@ -178,7 +178,6 @@ void softap_set_dns_addr(esp_netif_t *esp_netif_ap,esp_netif_t *esp_netif_sta)
     ESP_ERROR_CHECK_WITHOUT_ABORT(esp_netif_dhcps_start(esp_netif_ap));
 }
 
-#define DNS_PORT 53
 #define DNS_RESPONSE_TTL 300
 
 static void decode_dns_name(const char *packet, int offset, char *output, size_t max_len) {
@@ -196,10 +195,8 @@ static void decode_dns_name(const char *packet, int offset, char *output, size_t
     output[i] = '\0';
 }
 
-
-
 static void dns_server_task(void *pvParameters) {
-    char rx_buffer[256];
+    char rx_buffer[512];
     struct sockaddr_in source_addr;
     socklen_t socklen = sizeof(source_addr);
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
@@ -223,31 +220,93 @@ static void dns_server_task(void *pvParameters) {
                            (struct sockaddr *)&source_addr, &socklen);
         if (len <= 0) continue;
 
-        // Copia la respuesta base
-        char tx_buffer[256];
-        memcpy(tx_buffer, rx_buffer, len);
-
-        // Poner como respuesta
-        tx_buffer[2] |= 0x80; // QR = 1 (respuesta)
-        tx_buffer[3] |= 0x80; // RA = 1 (Recursion Available)
-        tx_buffer[7] = 0x01;  // ANCOUNT = 1
-
-        int ptr = len;
-
-        // Extract the query name
+        // Extraer QNAME
         char query_name[256];
         decode_dns_name(rx_buffer, 12, query_name, sizeof(query_name));
-        printf("Nombre recibido: %s\n", query_name);
+        printf("Consulta DNS recibida: %s\n", query_name);
 
-        // Si la consulta es para "pruebaDNS.local"
-        if (strcmp(query_name, "pruebaDNS.net") == 0) {
-            ESP_LOGI("dns_server", "Resolviendo pruebaDNS -> %s", DNS_RESPONSE_IP);
-        } 
+        // Verifica si coincide con lo que deseas responder
+        if (strcmp(query_name, "pruebaDNS.net") != 0) {
+            ESP_LOGI("dns_server", "Dominio no soportado: %s", query_name);
+            continue;
+        }
+
+        // Construir respuesta desde cero
+        char tx_buffer[512];
+        int ptr = 0;
+
+        // Copiar ID
+        tx_buffer[ptr++] = rx_buffer[0];
+        tx_buffer[ptr++] = rx_buffer[1];
+
+        // Flags: 0x8180 (respuesta estándar sin error)
+        tx_buffer[ptr++] = 0x81;
+        tx_buffer[ptr++] = 0x80;
+
+        // QDCOUNT = 1
+        tx_buffer[ptr++] = 0x00;
+        tx_buffer[ptr++] = 0x01;
+
+        // ANCOUNT = 1
+        tx_buffer[ptr++] = 0x00;
+        tx_buffer[ptr++] = 0x01;
+
+        // NSCOUNT = 0
+        tx_buffer[ptr++] = 0x00;
+        tx_buffer[ptr++] = 0x00;
+
+        // ARCOUNT = 0
+        tx_buffer[ptr++] = 0x00;
+        tx_buffer[ptr++] = 0x00;
+
+        // QNAME (copiar desde rx_buffer)
+        int qname_end = 12;
+        while (rx_buffer[qname_end] != 0) {
+            tx_buffer[ptr++] = rx_buffer[qname_end++];
+        }
+        tx_buffer[ptr++] = 0x00; // Fin QNAME
+
+        // QTYPE
+        tx_buffer[ptr++] = 0x00;
+        tx_buffer[ptr++] = 0x01; // A
+
+        // QCLASS
+        tx_buffer[ptr++] = 0x00;
+        tx_buffer[ptr++] = 0x01; // IN
+
+        // Answer section
+        tx_buffer[ptr++] = 0xC0;
+        tx_buffer[ptr++] = 0x0C; // NAME (puntero al QNAME en offset 12)
+
+        // TYPE = A
+        tx_buffer[ptr++] = 0x00;
+        tx_buffer[ptr++] = 0x01;
+
+        // CLASS = IN
+        tx_buffer[ptr++] = 0x00;
+        tx_buffer[ptr++] = 0x01;
+
+        // TTL = 300 (0x0000012C)
+        tx_buffer[ptr++] = 0x00;
+        tx_buffer[ptr++] = 0x00;
+        tx_buffer[ptr++] = 0x01;
+        tx_buffer[ptr++] = 0x2C;
+
+        // RDLENGTH = 4
+        tx_buffer[ptr++] = 0x00;
+        tx_buffer[ptr++] = 0x04;
+
+        // RDATA = 192.168.4.1
+        tx_buffer[ptr++] = 192;
+        tx_buffer[ptr++] = 168;
+        tx_buffer[ptr++] = 4;
+        tx_buffer[ptr++] = 1;
+
+        // Enviar paquete
         sendto(sock, tx_buffer, ptr, 0, (struct sockaddr *)&source_addr, socklen);
+        ESP_LOGI("dns_server", "Respuesta enviada a %s", query_name);
     }
 }
-
-
 
 void app_main(void)
 {
