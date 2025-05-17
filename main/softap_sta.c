@@ -182,7 +182,6 @@ void softap_set_dns_addr(esp_netif_t *esp_netif_ap,esp_netif_t *esp_netif_sta)
 
 static void decode_dns_name(const char *packet, int offset, char *output, size_t max_len) {
     int i = 0;
-    int j = 0;
     while (packet[offset] != 0 && i < max_len - 1) {
         int len = packet[offset++];
         for (int k = 0; k < len && i < max_len - 1; k++) {
@@ -193,6 +192,19 @@ static void decode_dns_name(const char *packet, int offset, char *output, size_t
         }
     }
     output[i] = '\0';
+}
+
+static void DNS_response_message(struct sockaddr_in *source_addr, char *query_name) {
+        char client_ip[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &source_addr->sin_addr, client_ip, sizeof(client_ip));
+
+        ESP_LOGI("dns_server",
+            "<dd-mmm-YYYY HH:MM:SS.uuu> client %s#%d: query: %s IN A + (%s)",
+            client_ip,
+            DNS_PORT,
+            query_name,
+            DNS_RESPONSE_IP
+        );
 }
 
 static void dns_server_task(void *pvParameters) {
@@ -226,85 +238,82 @@ static void dns_server_task(void *pvParameters) {
         printf("Consulta DNS recibida: %s\n", query_name);
 
         // Verifica si coincide con lo que deseas responder
-        if (strcmp(query_name, "pruebaDNS.net") != 0) {
-            ESP_LOGI("dns_server", "Dominio no soportado: %s", query_name);
-            continue;
+        if (strcmp(query_name, "pruebaDNS.net") == 0) {            
+            // Construir respuesta desde cero
+            char tx_buffer[512];
+            int ptr = 0;
+
+            // Copiar ID
+            tx_buffer[ptr++] = rx_buffer[0];
+            tx_buffer[ptr++] = rx_buffer[1];
+
+            // Flags: 0x8180 (respuesta estándar sin error)
+            tx_buffer[ptr++] = 0x81;
+            tx_buffer[ptr++] = 0x80;
+
+            // QDCOUNT = 1
+            tx_buffer[ptr++] = 0x00;
+            tx_buffer[ptr++] = 0x01;
+
+            // ANCOUNT = 1
+            tx_buffer[ptr++] = 0x00;
+            tx_buffer[ptr++] = 0x01;
+
+            // NSCOUNT = 0
+            tx_buffer[ptr++] = 0x00;
+            tx_buffer[ptr++] = 0x00;
+
+            // ARCOUNT = 0
+            tx_buffer[ptr++] = 0x00;
+            tx_buffer[ptr++] = 0x00;
+
+            // QNAME (copiar desde rx_buffer)
+            int qname_end = 12;
+            while (rx_buffer[qname_end] != 0) {
+                tx_buffer[ptr++] = rx_buffer[qname_end++];
+            }
+            tx_buffer[ptr++] = 0x00; // Fin QNAME
+
+            // QTYPE
+            tx_buffer[ptr++] = 0x00;
+            tx_buffer[ptr++] = 0x01; // A
+
+            // QCLASS
+            tx_buffer[ptr++] = 0x00;
+            tx_buffer[ptr++] = 0x01; // IN
+
+            // Answer section
+            tx_buffer[ptr++] = 0xC0;
+            tx_buffer[ptr++] = 0x0C; // NAME (puntero al QNAME en offset 12)
+
+            // TYPE = A
+            tx_buffer[ptr++] = 0x00;
+            tx_buffer[ptr++] = 0x01;
+
+            // CLASS = IN
+            tx_buffer[ptr++] = 0x00;
+            tx_buffer[ptr++] = 0x01;
+
+            // TTL = 300 (0x0000012C)
+            tx_buffer[ptr++] = 0x00;
+            tx_buffer[ptr++] = 0x00;
+            tx_buffer[ptr++] = 0x01;
+            tx_buffer[ptr++] = 0x2C;
+
+            // RDLENGTH = 4
+            tx_buffer[ptr++] = 0x00;
+            tx_buffer[ptr++] = 0x04;
+
+            // RDATA = 192.168.4.1
+            tx_buffer[ptr++] = 192;
+            tx_buffer[ptr++] = 168;
+            tx_buffer[ptr++] = 4;
+            tx_buffer[ptr++] = 1;
+
+            // Enviar paquete
+            sendto(sock, tx_buffer, ptr, 0, (struct sockaddr *)&source_addr, socklen);
+            DNS_response_message(&source_addr, query_name);
         }
-
-        // Construir respuesta desde cero
-        char tx_buffer[512];
-        int ptr = 0;
-
-        // Copiar ID
-        tx_buffer[ptr++] = rx_buffer[0];
-        tx_buffer[ptr++] = rx_buffer[1];
-
-        // Flags: 0x8180 (respuesta estándar sin error)
-        tx_buffer[ptr++] = 0x81;
-        tx_buffer[ptr++] = 0x80;
-
-        // QDCOUNT = 1
-        tx_buffer[ptr++] = 0x00;
-        tx_buffer[ptr++] = 0x01;
-
-        // ANCOUNT = 1
-        tx_buffer[ptr++] = 0x00;
-        tx_buffer[ptr++] = 0x01;
-
-        // NSCOUNT = 0
-        tx_buffer[ptr++] = 0x00;
-        tx_buffer[ptr++] = 0x00;
-
-        // ARCOUNT = 0
-        tx_buffer[ptr++] = 0x00;
-        tx_buffer[ptr++] = 0x00;
-
-        // QNAME (copiar desde rx_buffer)
-        int qname_end = 12;
-        while (rx_buffer[qname_end] != 0) {
-            tx_buffer[ptr++] = rx_buffer[qname_end++];
-        }
-        tx_buffer[ptr++] = 0x00; // Fin QNAME
-
-        // QTYPE
-        tx_buffer[ptr++] = 0x00;
-        tx_buffer[ptr++] = 0x01; // A
-
-        // QCLASS
-        tx_buffer[ptr++] = 0x00;
-        tx_buffer[ptr++] = 0x01; // IN
-
-        // Answer section
-        tx_buffer[ptr++] = 0xC0;
-        tx_buffer[ptr++] = 0x0C; // NAME (puntero al QNAME en offset 12)
-
-        // TYPE = A
-        tx_buffer[ptr++] = 0x00;
-        tx_buffer[ptr++] = 0x01;
-
-        // CLASS = IN
-        tx_buffer[ptr++] = 0x00;
-        tx_buffer[ptr++] = 0x01;
-
-        // TTL = 300 (0x0000012C)
-        tx_buffer[ptr++] = 0x00;
-        tx_buffer[ptr++] = 0x00;
-        tx_buffer[ptr++] = 0x01;
-        tx_buffer[ptr++] = 0x2C;
-
-        // RDLENGTH = 4
-        tx_buffer[ptr++] = 0x00;
-        tx_buffer[ptr++] = 0x04;
-
-        // RDATA = 192.168.4.1
-        tx_buffer[ptr++] = 192;
-        tx_buffer[ptr++] = 168;
-        tx_buffer[ptr++] = 4;
-        tx_buffer[ptr++] = 1;
-
-        // Enviar paquete
-        sendto(sock, tx_buffer, ptr, 0, (struct sockaddr *)&source_addr, socklen);
-        ESP_LOGI("dns_server", "Respuesta enviada a %s", query_name);
     }
 }
 
